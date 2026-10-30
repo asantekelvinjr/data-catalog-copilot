@@ -1,0 +1,409 @@
+# Synthetic data catalog for a FICTIONAL consumer-credit company ("Lumen Finance").
+# No real company, customer or system is described here. Metadata only: no data values.
+company: Lumen Finance (fictional)
+
+terms:
+  - id: days_past_due
+    name: Days past due (DPD)
+    synonyms: [dpd, days past due, late days, jours de retard, retard de paiement, late payment, paiement en retard]
+    definition: Number of calendar days between the due date of an installment and the day it is paid, or until today if it is still unpaid. Zero means on time.
+    related_assets: [core.fact_payment, mart.mart_credit_risk, mart.mart_collections]
+  - id: default
+    name: Default
+    synonyms: [defaut, defaut de paiement, impaye, impayes, npl, non performing loan, delinquent, serious delinquency]
+    definition: A contract is in default when at least one installment is more than 90 days past due. The flag default_flag in the credit risk mart is the target used by risk models.
+    related_assets: [mart.mart_credit_risk, dashboard.default_rate_monitor, model.pd_scorecard_v3]
+  - id: probability_of_default
+    name: Probability of default (PD)
+    synonyms: [pd, probabilite de defaut, score de risque, risk score, credit score, scoring]
+    definition: Estimated probability that a contract will go into default within 12 months. Produced by the PD scorecard model and used in credit decisions.
+    related_assets: [model.pd_scorecard_v3, mart.mart_credit_risk]
+  - id: outstanding_balance
+    name: Outstanding balance
+    synonyms: [encours, outstanding, remaining balance, capital restant du, amount still owed]
+    definition: Total amount a customer still owes on a contract (principal plus unpaid interest) at the snapshot date.
+    related_assets: [mart.mart_credit_risk, mart.mart_collections]
+  - id: split_payment
+    name: Split payment (3x / 4x)
+    synonyms: [paiement en 3x, paiement en 4x, paiement fractionne, bnpl, buy now pay later, pay in installments, pay in 3, pay in 4]
+    definition: Product that lets a customer pay a purchase in three or four installments, usually with little or no interest. Stored as product_type SPLIT_3X or SPLIT_4X.
+    related_assets: [core.fact_contract, raw.contracts_raw]
+  - id: vintage
+    name: Vintage
+    synonyms: [cohort, cohorte, signing cohort, contract cohort]
+    definition: Group of contracts signed in the same month. Used to compare how default rates evolve over time for each cohort.
+    related_assets: [mart.mart_credit_risk, dashboard.default_rate_monitor]
+  - id: kyc
+    name: KYC (Know Your Customer)
+    synonyms: [connaissance client, identity verification, verification d identite, know your customer]
+    definition: Regulatory identity verification performed before a contract is signed. kyc_status takes the values PENDING, VERIFIED or REJECTED.
+    related_assets: [raw.customers_raw, staging.stg_customers, core.dim_customer]
+  - id: pseudonymisation
+    name: Pseudonymisation
+    synonyms: [pseudonymization, hashing, hashed identifier, pseudonymisation des donnees, masking]
+    definition: Replacing direct identifiers (name, email, phone) with a non-reversible key. In this catalog it happens in the staging layer, so core and mart tables contain no direct identifiers.
+    related_assets: [staging.stg_customers, core.dim_customer]
+  - id: pii
+    name: Personal data (PII)
+    synonyms: [personal data, donnees personnelles, rgpd, gdpr, sensitive data, personally identifiable information, donnees sensibles]
+    definition: Any information that identifies a person directly (name, email, phone, address, birth date) or indirectly. Columns carry a classification of direct_identifier, indirect_identifier, financial or none.
+    related_assets: [raw.customers_raw, staging.stg_customers]
+  - id: data_lineage
+    name: Data lineage
+    synonyms: [lineage, lignee, tracabilite, provenance, data origin, origine des donnees]
+    definition: The path data follows from source systems through staging and core tables to marts, dashboards and models. Used for impact analysis before a change.
+    related_assets: []
+  - id: mcc
+    name: Merchant category code (MCC)
+    synonyms: [merchant category, categorie commercant, mcc code, code activite commercant]
+    definition: Four-digit code classifying the activity of a merchant. merchant_segment groups MCC codes into business segments such as ELECTRONICS, FASHION or TRAVEL.
+    related_assets: [raw.merchant_feed, core.dim_merchant]
+  - id: recovery_rate
+    name: Recovery rate
+    synonyms: [taux de recouvrement, collections, recouvrement, debt recovery, recovered amount]
+    definition: Share of overdue amount recovered by the collections team within a given period.
+    related_assets: [mart.mart_collections, dashboard.collections_performance]
+  - id: fraud_score
+    name: Fraud score
+    synonyms: [score de fraude, fraud detection, detection de fraude, fraude, suspicious contract]
+    definition: Score between 0 and 1 produced by the fraud detector for each new contract. Above 0.8 triggers a manual review.
+    related_assets: [model.fraud_detector_v2, mart.mart_fraud_signals]
+  - id: data_steward
+    name: Data steward
+    synonyms: [steward, responsable des donnees, data owner, proprietaire des donnees, data governance]
+    definition: Person accountable for the quality and documentation of a dataset. Each asset lists a steward and an owning team.
+    related_assets: []
+
+assets:
+  # ---------------------------------------------------------------- RAW
+  - id: raw.customers_raw
+    type: table
+    layer: raw
+    description: Customer master records ingested every day from the CRM system. Contains direct identifiers and must not be exposed outside the secure raw zone.
+    owner: CRM Data Team
+    steward: Customer Data Steward
+    refresh: daily 02:00 UTC
+    criticality: high
+    upstream: []
+    quality_rules:
+      - customer_id is unique and never null
+      - email matches a valid email format
+      - birth_date implies an age between 18 and 100
+    columns:
+      - {name: customer_id, type: string, description: Technical identifier of the customer in the CRM, classification: indirect_identifier}
+      - {name: full_name, type: string, description: First and last name of the customer, classification: direct_identifier}
+      - {name: email, type: string, description: Email address of the customer, classification: direct_identifier}
+      - {name: phone, type: string, description: Mobile phone number, classification: direct_identifier}
+      - {name: birth_date, type: date, description: Date of birth, classification: direct_identifier}
+      - {name: address, type: string, description: Postal address, classification: direct_identifier}
+      - {name: country, type: string, description: ISO country code of residence, classification: none}
+      - {name: kyc_status, type: string, description: Identity verification status PENDING VERIFIED or REJECTED, classification: none}
+      - {name: created_at, type: timestamp, description: Date the customer record was created, classification: none}
+  - id: raw.contracts_raw
+    type: table
+    layer: raw
+    description: Credit and split-payment contracts coming from the loan origination system.
+    owner: Origination Platform Team
+    steward: Credit Operations Steward
+    refresh: hourly
+    criticality: high
+    upstream: []
+    quality_rules:
+      - contract_id is unique and never null
+      - amount_financed is greater than 0
+      - signed_at is not in the future
+    columns:
+      - {name: contract_id, type: string, description: Unique identifier of the contract, classification: none}
+      - {name: customer_id, type: string, description: Customer who signed the contract, classification: indirect_identifier}
+      - {name: merchant_id, type: string, description: Merchant where the purchase was made, classification: none}
+      - {name: product_type, type: string, description: Product such as SPLIT_3X SPLIT_4X INSTALLMENT or REVOLVING, classification: none}
+      - {name: amount_financed, type: decimal, description: Amount financed in euros, classification: financial}
+      - {name: interest_rate, type: decimal, description: Annual interest rate in percent, classification: financial}
+      - {name: term_months, type: integer, description: Contract duration in months, classification: none}
+      - {name: signed_at, type: timestamp, description: Signature date and time, classification: none}
+      - {name: status, type: string, description: Contract status ACTIVE CLOSED or CANCELLED, classification: none}
+  - id: raw.payments_raw
+    type: table
+    layer: raw
+    description: Payment events (installments due and received) streamed from the payment gateway.
+    owner: Payments Platform Team
+    steward: Payments Data Steward
+    refresh: every 15 minutes
+    criticality: high
+    upstream: []
+    quality_rules:
+      - payment_id is unique and never null
+      - amount_paid is never greater than amount_due plus penalties
+      - paid_date is null only when status is UNPAID
+    columns:
+      - {name: payment_id, type: string, description: Unique identifier of the payment event, classification: none}
+      - {name: contract_id, type: string, description: Contract the installment belongs to, classification: none}
+      - {name: due_date, type: date, description: Date the installment is due, classification: none}
+      - {name: paid_date, type: date, description: Date the installment was received, classification: none}
+      - {name: amount_due, type: decimal, description: Installment amount in euros, classification: financial}
+      - {name: amount_paid, type: decimal, description: Amount actually received in euros, classification: financial}
+      - {name: status, type: string, description: Payment status PAID UNPAID or PARTIAL, classification: none}
+  - id: raw.merchant_feed
+    type: table
+    layer: raw
+    description: Merchant referential received from the partner onboarding team.
+    owner: Partnerships Data Team
+    steward: Merchant Data Steward
+    refresh: daily 03:00 UTC
+    criticality: medium
+    upstream: []
+    quality_rules:
+      - merchant_id is unique
+      - mcc is a four-digit code
+    columns:
+      - {name: merchant_id, type: string, description: Unique identifier of the merchant, classification: none}
+      - {name: merchant_name, type: string, description: Trade name of the merchant, classification: none}
+      - {name: mcc, type: string, description: Four-digit merchant category code, classification: none}
+      - {name: country, type: string, description: Country where the merchant operates, classification: none}
+      - {name: onboarded_at, type: date, description: Date the merchant joined the partner network, classification: none}
+  # ---------------------------------------------------------------- STAGING
+  - id: staging.stg_customers
+    type: table
+    layer: staging
+    description: Cleaned and pseudonymised customers. Direct identifiers are replaced by a hashed customer_key and birth_date is reduced to an age band.
+    owner: Data Engineering
+    steward: Customer Data Steward
+    refresh: daily 03:30 UTC
+    criticality: high
+    upstream: [raw.customers_raw]
+    quality_rules:
+      - customer_key is unique and never null
+      - no direct identifier column is present
+    columns:
+      - {name: customer_key, type: string, description: Irreversible hash of customer_id used as join key everywhere downstream, classification: indirect_identifier}
+      - {name: age_band, type: string, description: Age group such as 18-24 25-34 or 35-44 derived from birth_date, classification: indirect_identifier}
+      - {name: country, type: string, description: ISO country code of residence, classification: none}
+      - {name: kyc_status, type: string, description: Identity verification status, classification: none}
+  - id: staging.stg_contracts
+    type: table
+    layer: staging
+    description: Deduplicated and typed contracts, with customer_id replaced by customer_key.
+    owner: Data Engineering
+    steward: Credit Operations Steward
+    refresh: hourly
+    criticality: high
+    upstream: [raw.contracts_raw, staging.stg_customers]
+    quality_rules:
+      - one row per contract_id
+      - every customer_key exists in stg_customers
+    columns:
+      - {name: contract_id, type: string, description: Unique identifier of the contract, classification: none}
+      - {name: customer_key, type: string, description: Hashed customer key, classification: indirect_identifier}
+      - {name: merchant_id, type: string, description: Merchant of the purchase, classification: none}
+      - {name: product_type, type: string, description: Product type of the contract, classification: none}
+      - {name: amount_financed, type: decimal, description: Amount financed in euros, classification: financial}
+      - {name: signed_date, type: date, description: Signature date, classification: none}
+  - id: staging.stg_payments
+    type: table
+    layer: staging
+    description: Deduplicated payment events with consistent dates and amounts.
+    owner: Data Engineering
+    steward: Payments Data Steward
+    refresh: every 15 minutes
+    criticality: high
+    upstream: [raw.payments_raw]
+    quality_rules:
+      - one row per payment_id
+      - due_date is never null
+    columns:
+      - {name: payment_id, type: string, description: Unique identifier of the payment event, classification: none}
+      - {name: contract_id, type: string, description: Contract of the installment, classification: none}
+      - {name: due_date, type: date, description: Installment due date, classification: none}
+      - {name: paid_date, type: date, description: Installment received date, classification: none}
+      - {name: amount_due, type: decimal, description: Installment amount in euros, classification: financial}
+      - {name: amount_paid, type: decimal, description: Amount received in euros, classification: financial}
+  # ---------------------------------------------------------------- CORE
+  - id: core.dim_customer
+    type: table
+    layer: core
+    description: Customer dimension for analytics. One row per customer, pseudonymised, with first contract date and activity flag.
+    owner: Data Engineering
+    steward: Customer Data Steward
+    refresh: daily 04:00 UTC
+    criticality: high
+    upstream: [staging.stg_customers, staging.stg_contracts]
+    quality_rules:
+      - customer_key is unique
+      - age_band is never null
+    columns:
+      - {name: customer_key, type: string, description: Hashed customer key, classification: indirect_identifier}
+      - {name: age_band, type: string, description: Age group of the customer, classification: indirect_identifier}
+      - {name: country, type: string, description: Country of residence, classification: none}
+      - {name: kyc_status, type: string, description: Identity verification status, classification: none}
+      - {name: first_contract_date, type: date, description: Date of the first contract signed by the customer, classification: none}
+      - {name: is_active, type: boolean, description: True if the customer has at least one active contract, classification: none}
+  - id: core.dim_merchant
+    type: table
+    layer: core
+    description: Merchant dimension with business segment derived from the merchant category code.
+    owner: Data Engineering
+    steward: Merchant Data Steward
+    refresh: daily 04:00 UTC
+    criticality: medium
+    upstream: [raw.merchant_feed]
+    quality_rules:
+      - merchant_id is unique
+      - merchant_segment is never null
+    columns:
+      - {name: merchant_id, type: string, description: Unique identifier of the merchant, classification: none}
+      - {name: merchant_name, type: string, description: Trade name of the merchant, classification: none}
+      - {name: mcc, type: string, description: Merchant category code, classification: none}
+      - {name: merchant_segment, type: string, description: Business segment such as ELECTRONICS FASHION or TRAVEL derived from mcc, classification: none}
+  - id: core.fact_contract
+    type: table
+    layer: core
+    description: One row per credit or split-payment contract with amounts, product and status.
+    owner: Data Engineering
+    steward: Credit Operations Steward
+    refresh: hourly
+    criticality: high
+    upstream: [staging.stg_contracts, core.dim_merchant]
+    quality_rules:
+      - contract_key is unique
+      - amount_financed is greater than 0
+      - product_type belongs to the allowed list
+    columns:
+      - {name: contract_key, type: string, description: Surrogate key of the contract, classification: none}
+      - {name: customer_key, type: string, description: Hashed customer key, classification: indirect_identifier}
+      - {name: merchant_id, type: string, description: Merchant where the purchase was made, classification: none}
+      - {name: product_type, type: string, description: Product type such as SPLIT_3X or SPLIT_4X, classification: none}
+      - {name: amount_financed, type: decimal, description: Amount financed in euros, classification: financial}
+      - {name: signed_date, type: date, description: Signature date, classification: none}
+      - {name: contract_status, type: string, description: Contract status ACTIVE CLOSED or CANCELLED, classification: none}
+  - id: core.fact_payment
+    type: table
+    layer: core
+    description: One row per installment with due date, payment date and days past due. Reference table for repayment behaviour.
+    owner: Data Engineering
+    steward: Payments Data Steward
+    refresh: every 15 minutes
+    criticality: high
+    upstream: [staging.stg_payments, core.fact_contract]
+    quality_rules:
+      - payment_id is unique
+      - days_past_due is never negative
+      - amount_paid is never null for PAID installments
+    columns:
+      - {name: payment_id, type: string, description: Unique identifier of the installment, classification: none}
+      - {name: contract_key, type: string, description: Contract of the installment, classification: none}
+      - {name: due_date, type: date, description: Installment due date, classification: none}
+      - {name: paid_date, type: date, description: Date the installment was received, classification: none}
+      - {name: amount_due, type: decimal, description: Installment amount in euros, classification: financial}
+      - {name: amount_paid, type: decimal, description: Amount received in euros, classification: financial}
+      - {name: days_past_due, type: integer, description: Days past due of the installment, computed as paid_date minus due_date or today minus due_date if unpaid, classification: none}
+  # ---------------------------------------------------------------- MARTS
+  - id: mart.mart_credit_risk
+    type: table
+    layer: mart
+    description: Credit risk mart with one row per contract. Holds behavioural features, outstanding balance, vintage and the default flag used to train risk models.
+    owner: Risk Analytics
+    steward: Risk Data Steward
+    refresh: daily 05:00 UTC
+    criticality: high
+    upstream: [core.fact_contract, core.fact_payment, core.dim_customer, core.dim_merchant]
+    quality_rules:
+      - one row per contract_key
+      - default_flag is never null
+      - outstanding_balance is never negative
+    columns:
+      - {name: contract_key, type: string, description: Surrogate key of the contract, classification: none}
+      - {name: customer_key, type: string, description: Hashed customer key, classification: indirect_identifier}
+      - {name: product_type, type: string, description: Product type of the contract, classification: none}
+      - {name: amount_financed, type: decimal, description: Amount financed in euros, classification: financial}
+      - {name: max_dpd_90d, type: integer, description: Maximum days past due over the last 90 days, classification: none}
+      - {name: n_late_payments, type: integer, description: Number of late installments since signature, classification: none}
+      - {name: outstanding_balance, type: decimal, description: Amount still owed at the snapshot date, classification: financial}
+      - {name: vintage_month, type: string, description: Month of signature used to build vintage cohorts, classification: none}
+      - {name: merchant_segment, type: string, description: Business segment of the merchant, classification: none}
+      - {name: default_flag, type: boolean, description: True when the contract is more than 90 days past due, classification: none}
+  - id: mart.mart_collections
+    type: table
+    layer: mart
+    description: Overdue contracts with their delinquency bucket and recovery status, used by the collections team.
+    owner: Collections Analytics
+    steward: Risk Data Steward
+    refresh: daily 05:30 UTC
+    criticality: high
+    upstream: [core.fact_payment, core.fact_contract]
+    quality_rules:
+      - one row per overdue contract_key
+      - dpd_bucket matches days_past_due ranges
+    columns:
+      - {name: contract_key, type: string, description: Surrogate key of the overdue contract, classification: none}
+      - {name: dpd_bucket, type: string, description: Delinquency bucket 1-30 31-60 61-90 or 90+ days past due, classification: none}
+      - {name: amount_overdue, type: decimal, description: Total overdue amount in euros, classification: financial}
+      - {name: last_contact_date, type: date, description: Last date the customer was contacted by collections, classification: none}
+      - {name: recovery_status, type: string, description: Status such as OPEN PROMISE_TO_PAY or RECOVERED, classification: none}
+  - id: mart.mart_fraud_signals
+    type: table
+    layer: mart
+    description: Behavioural signals computed for each new contract to detect fraud, such as velocity and unusual amounts.
+    owner: Fraud Analytics
+    steward: Risk Data Steward
+    refresh: hourly
+    criticality: high
+    upstream: [core.fact_contract, core.dim_customer]
+    quality_rules:
+      - one row per contract_key
+      - signals are computed within 10 minutes of signature
+    columns:
+      - {name: contract_key, type: string, description: Surrogate key of the contract, classification: none}
+      - {name: contracts_last_24h, type: integer, description: Number of contracts signed by the same customer in the last 24 hours, classification: none}
+      - {name: amount_vs_median, type: decimal, description: Ratio between the contract amount and the customer median amount, classification: none}
+      - {name: is_new_customer, type: boolean, description: True when the customer signed the first contract less than 30 days ago, classification: none}
+  # ---------------------------------------------------------------- CONSUMERS
+  - id: dashboard.default_rate_monitor
+    type: dashboard
+    layer: consumer
+    description: Dashboard tracking default rate by vintage, product and merchant segment for risk committees.
+    owner: Risk Analytics
+    steward: Risk Data Steward
+    refresh: daily 06:00 UTC
+    criticality: high
+    upstream: [mart.mart_credit_risk]
+    quality_rules:
+      - totals reconcile with mart_credit_risk
+    columns: []
+  - id: dashboard.collections_performance
+    type: dashboard
+    layer: consumer
+    description: Dashboard of recovery rate and overdue amounts by delinquency bucket for the collections team.
+    owner: Collections Analytics
+    steward: Risk Data Steward
+    refresh: daily 06:00 UTC
+    criticality: medium
+    upstream: [mart.mart_collections]
+    quality_rules:
+      - totals reconcile with mart_collections
+    columns: []
+  - id: model.pd_scorecard_v3
+    type: model
+    layer: consumer
+    description: Probability of default model (version 3) trained on the credit risk mart. Scores each new application for credit decisions.
+    owner: Data Science
+    steward: Risk Data Steward
+    refresh: retrained quarterly
+    criticality: high
+    upstream: [mart.mart_credit_risk]
+    quality_rules:
+      - gini above 0.50 on the monitoring sample
+      - population stability index below 0.25
+    columns: []
+  - id: model.fraud_detector_v2
+    type: model
+    layer: consumer
+    description: Fraud detection model (version 2) that scores each new contract using behavioural signals.
+    owner: Data Science
+    steward: Risk Data Steward
+    refresh: retrained monthly
+    criticality: high
+    upstream: [mart.mart_fraud_signals]
+    quality_rules:
+      - precision above 0.30 at the review threshold
+      - scoring latency below 200 ms
+    columns: []
